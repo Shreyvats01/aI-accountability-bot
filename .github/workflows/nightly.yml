@@ -1,0 +1,33 @@
+name: Nightly Accountability Pipeline
+
+on:
+  schedule:
+    - cron: '29 18 * * *'  # 11:59 PM IST
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+      - run: npm ci
+      - run: npx playwright install chromium --with-deps
+      - name: Run nightly pipeline
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+        run: npx tsx src/pipeline/nightly.ts
+      - name: Heartbeat
+        run: |
+          echo '{"lastRun":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > last_run.json
+          git config user.name "accountability-bot"
+          git config user.email "bot@noreply.github.com"
+          git add last_run.json
+          git diff --cached --quiet || git commit -m "chore: heartbeat [skip ci]"
+          git push

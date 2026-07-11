@@ -1,0 +1,35 @@
+{
+  "name": "accountability-bot",
+  "version": "1.0.0",
+  "description": "AI-powered accountability coach",
+  "main": "index.js",
+  "scripts": {
+    "test": "vitest run",
+    "dev": "tsx src/index.ts",
+    "test:watch": "vitest",
+    "build": "tsc",
+    "pipeline:nightly": "tsx src/pipeline/nightly.ts",
+    "pipeline:midday": "tsx src/pipeline/midday-check.ts",
+    "pipeline:weekly": "tsx src/pipeline/weekly.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@google/genai": "^2.10.0",
+    "@prisma/client": "^5.22.0",
+    "dotenv": "^17.4.2",
+    "node-cron": "^4.6.0",
+    "playwright": "^1.61.1",
+    "prisma": "^5.22.0",
+    "telegraf": "^4.16.3",
+    "tsx": "^4.23.0",
+    "typescript": "^6.0.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "vitest": "^4.1.10"
+  }
+}

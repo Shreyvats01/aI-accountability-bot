@@ -1,0 +1,387 @@
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+}
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+// ═══════════════════════════════════════════════
+// 1. CORE USER
+// ═══════════════════════════════════════════════
+model User {
+  id              String   @id @default(uuid())
+  telegramId      String   @unique
+  name            String?
+  timezone        String   @default("Asia/Kolkata")
+  ultimateGoals   String
+  currentStreak   Int      @default(0)
+  longestStreak   Int      @default(0)
+  
+  // Intervention Engine: trust & engagement tracking
+  trustScore      Float    @default(0.5)  // 0.0 = ignoring bot, 1.0 = highly engaged
+  lastReplyAt     DateTime?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  credentials     PlatformCredentials?
+  memoryBlocks    MemoryBlock[]
+  dailyLogs       DailyLog[]
+  episodes        EpisodicMemory[]
+  strategyArms    StrategyArm[]
+  interactions    CoachInteraction[]
+  checkpoints     PipelineCheckpoint[]
+  curiosityLog    CuriosityLog[]
+  
+  historicalActivity HistoricalActivity[]
+  guideSessions      GuideSession[]
+  guideTasks         GuideTask[]
+  guidePromptTemplates GuidePromptTemplate[]
+  worldFacts         WorldFact[]
+}
+
+// ═══════════════════════════════════════════════
+// 2. PLATFORM CREDENTIALS
+// ═══════════════════════════════════════════════
+model PlatformCredentials {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  githubUsername   String?
+  githubPat       String?
+  xHandle         String?   // Plain text username for scraping
+  xAuthToken      String?   // Encrypted
+  linkedInLiAt    String?   // Encrypted
+  updatedAt       DateTime @updatedAt
+}
+
+// ═══════════════════════════════════════════════
+// 3. LETTA-INSPIRED MEMORY BLOCKS (Self-Editing)
+// ═══════════════════════════════════════════════
+model MemoryBlock {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Block type: "persona" | "human" | "world" | "scratchpad"
+  blockType       String
+  
+  // The actual content of the memory block (free-form text or JSON)
+  content         String   @db.Text
+  
+  // Vector embedding of the content (for persona drift monitoring & similarity search)
+  embedding       Unsupported("vector(768)")?
+  
+  // For persona drift tracking
+  originalContent String?  @db.Text   // Snapshot from Day 1 (only for persona block)
+  originalEmbedding Unsupported("vector(768)")?
+  
+  // Version tracking: every edit creates a new version
+  version         Int      @default(1)
+  
+  // Who made the last edit: "system" | "ai_self_edit" | "user_reply" | "distillation"
+  lastEditedBy    String   @default("system")
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, blockType])
+  @@index([userId, blockType])
+}
+
+// ═══════════════════════════════════════════════
+// 4. WORKING MEMORY: Daily Activity Logs
+// ═══════════════════════════════════════════════
+model DailyLog {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date            DateTime @default(now()) @db.Date
+  
+  activityData    Json     // { github: {...}, x: {...}, linkedin: {...} }
+  activityScore   Float    @default(0)
+  
+  coachMessage    String?
+  strategyUsed    String?
+  
+  // Intervention Engine metadata
+  interventionLevel String?  // "skip" | "low" | "medium" | "high" | "critical"
+  messageDeliveredAt DateTime?
+
+  @@unique([userId, date])
+  @@index([userId, date(sort: Desc)])
+}
+
+// ═══════════════════════════════════════════════
+// 5. EPISODIC MEMORY (Significant Events)
+// ═══════════════════════════════════════════════
+model EpisodicMemory {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  eventType       String   // "streak_broken" | "goal_achieved" | "burnout_detected" | "breakthrough" | "strategy_discovered"
+  narrative       String   @db.Text
+  triggerContext  Json
+  
+  // 768-dim vector for cosine similarity search
+  embedding       Unsupported("vector(768)")
+  
+  emotionalTone   String?
+  
+  // Link to the strategy that was active during this episode
+  activeStrategy  String?
+  strategyOutcome String?  // "success" | "failure" | "neutral"
+  
+  createdAt       DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+// ═══════════════════════════════════════════════
+// 6. CONTEXTUAL BANDIT: Strategy Arms
+// ═══════════════════════════════════════════════
+model StrategyArm {
+  id              String @id @default(uuid())
+  userId          String
+  user            User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  armName         String
+  
+  // Thompson Sampling: Beta distribution parameters
+  alpha           Float  @default(1)
+  beta            Float  @default(1)
+  
+  totalPulls      Int    @default(0)
+  totalRewards    Float  @default(0)
+  
+  // Context-awareness: track performance by day-of-week
+  dayPerformance  Json?  // { "monday": { alpha: 2, beta: 1 }, "tuesday": { alpha: 1, beta: 3 }, ... }
+
+  @@unique([userId, armName])
+}
+
+// ═══════════════════════════════════════════════
+// 7. COACH INTERACTION LOG (Full Audit Trail)
+// ═══════════════════════════════════════════════
+model CoachInteraction {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  strategyUsed    String
+  banditSamples   Json
+  
+  // The full prompt and response (for debugging & replay)
+  promptSent      String   @db.Text
+  aiResponse      String   @db.Text
+  
+  // User engagement tracking
+  userReply       String?
+  userSentiment   String?
+  replyLatencyMs  Int?     // How quickly did they respond?
+  
+  // Reward from next day
+  rewardScore     Float?
+  rewardCalculatedAt DateTime?
+  
+  // Intervention Engine metadata
+  interventionLevel String?
+  
+  // Curiosity Engine: was a question asked?
+  curiosityQuestion String?
+  curiosityAnswered Boolean @default(false)
+  
+  createdAt       DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+// ═══════════════════════════════════════════════
+// 8. PIPELINE CHECKPOINTS (LangGraph-inspired)
+// ═══════════════════════════════════════════════
+model PipelineCheckpoint {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  runDate         DateTime @db.Date
+  
+  // Current stage: "collect" | "parse" | "memory" | "strategy" | "generate" | "deliver" | "reflect"
+  stage           String
+  status          String   // "running" | "completed" | "failed"
+  
+  // Serialized partial pipeline state (JSON)
+  stateSnapshot   Json
+  
+  // Error tracking for resumability
+  errorMessage    String?
+  retryCount      Int      @default(0)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, runDate])
+  @@index([userId, runDate(sort: Desc)])
+}
+
+// ═══════════════════════════════════════════════
+// 9. CURIOSITY ENGINE LOG
+// ═══════════════════════════════════════════════
+model CuriosityLog {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  questionAsked   String
+  questionType    String   // "new_entity" | "stale_entity" | "missing_relationship" | "emotional_probe"
+  
+  // What knowledge gap was this trying to fill?
+  targetEntity    String?
+  targetGap       String?
+  
+  // User's response (filled when they reply via Telegram)
+  userAnswer      String?
+  answeredAt      DateTime?
+  
+  // Did this answer result in a knowledge graph update?
+  kgUpdated       Boolean  @default(false)
+  
+  createdAt       DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+// ═══════════════════════════════════════════════
+// 10. HISTORICAL ACTIVITY (Temporal Context)
+// ═══════════════════════════════════════════════
+model HistoricalActivity {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  platform    String   // 'github' | 'x'
+  type        String   // 'commit' | 'pr' | 'tweet' | 'reply'
+  content     String   @db.Text
+  url         String?
+  eventAt     DateTime // Timestamp of the actual event
+
+  // AI-extracted metadata
+  topics      String[]
+  sentiment   String?  // 'positive' | 'neutral' | 'frustrated' | 'excited'
+  isBootstrap Boolean  @default(false)
+
+  createdAt   DateTime @default(now())
+
+  @@index([userId, platform, eventAt(sort: Desc)])
+  @@index([userId, eventAt(sort: Desc)])
+}
+
+// ═══════════════════════════════════════════════
+// 11. GUIDE SESSIONS (Adaptive Guide System)
+// ═══════════════════════════════════════════════
+model GuideSession {
+  id             String    @id @default(uuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  status         String    @default("active") // 'active' | 'synthesizing' | 'completed'
+  triggerType    String    // 'command' | 'nlp_detected'
+  triggerPhrase  String?
+  transcript     Json      @default("[]")
+  turnCount      Int       @default(0)
+
+  // Guide Bandit
+  guideStrategy  String?
+  promptTemplate String?   @db.Text // the actual DSPy-optimized template used
+
+  // CrewAI multi-agent outputs
+  diagnosticianOutput String? @db.Text
+  psychologistOutput  String? @db.Text
+  coachOutput         String? @db.Text
+
+  // Final output
+  actionPlanSent    String?   @db.Text
+  synthesizedAt     DateTime?
+
+  // Reward (filled by nightly pipeline)
+  rewardScore         Float?
+  rewardReason        String?
+  rewardCalculatedAt  DateTime?
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  tasks      GuideTask[]
+
+  @@index([userId, status])
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+// ═══════════════════════════════════════════════
+// 12. GUIDE TASKS (Auto-GPT Decomposition)
+// ═══════════════════════════════════════════════
+model GuideTask {
+  id          String   @id @default(uuid())
+  sessionId   String
+  session     GuideSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String   @db.Text
+  estimatedMinutes Int?
+  suggestedDay    String?  // 'today' | 'tomorrow' | 'this_week'
+  status      String   @default("pending") // 'pending' | 'done' | 'skipped'
+  completedAt DateTime?
+
+  createdAt   DateTime @default(now())
+
+  @@index([userId, status])
+}
+
+// ═══════════════════════════════════════════════
+// 13. GUIDE PROMPT TEMPLATES (DSPy Optimizer)
+// ═══════════════════════════════════════════════
+model GuidePromptTemplate {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  armName     String   // e.g. 'guide_socratic'
+  template    String   @db.Text
+  version     Int      @default(1)
+  derivedFrom String?  // parent template ID
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, armName, version])
+  @@index([userId, armName])
+}
+
+// ═══════════════════════════════════════════════
+// 14. WORLD FACT (Temporal Knowledge Graph)
+// ═══════════════════════════════════════════════
+model WorldFact {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  subject     String
+  subjectType String
+  
+  predicate   String
+  object      String
+  
+  confidence  Float    @default(0.8)
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+  seenCount   Int      @default(1)
+  isRetired   Boolean  @default(false)
+  
+  source      String
+  
+  @@index([userId, subject])
+  @@index([userId, lastSeenAt(sort: Desc)])
+}
