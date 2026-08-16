@@ -8,9 +8,7 @@
     "dev": "tsx src/index.ts",
     "test:watch": "vitest",
     "build": "tsc",
-    "pipeline:nightly": "tsx src/pipeline/nightly.ts",
-    "pipeline:midday": "tsx src/pipeline/midday-check.ts",
-    "pipeline:weekly": "tsx src/pipeline/weekly.ts"
+    "pipeline:nightly": "tsx src/pipeline/nightly.ts"
   },
   "keywords": [],
   "author": "",
